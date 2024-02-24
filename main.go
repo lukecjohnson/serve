@@ -83,7 +83,7 @@ func getLocalIP() string {
 }
 
 func main() {
-	host := flag.String("host", "localhost", "Hostname to bind")
+	host := flag.String("host", "localhost", "Host to listen on")
 	port := flag.String("port", "8080", "Port to listen on")
 	quiet := flag.Bool("quiet", false, "Disable logging")
 
