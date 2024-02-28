@@ -4,15 +4,11 @@ A simple command-line static file server
 
 ```
 Usage:
-  serve [flags] [directory]
+  serve [flags] [root]
 
 Flags:
-  -host string
-    	Host to listen on (default "localhost")
-  -list
-    	Enable directory listings
-  -port string
-    	Port to listen on (default "8080")
-  -quiet
-    	Disable logging
+  -a    Serve all files, including hidden files
+  -d    Enable directory listings
+  -l    Specify the address to listen on in the form `host:port` or `port`
+  -q    Disable logging
 ```
