@@ -14,6 +14,13 @@ import (
 	"time"
 )
 
+var (
+	host  = flag.String("host", "localhost", "Host to listen on")
+	port  = flag.String("port", "8080", "Port to listen on")
+	list  = flag.Bool("list", false, "Enable directory listings")
+	quiet = flag.Bool("quiet", false, "Disable logging")
+)
+
 type fileSystem struct {
 	http.FileSystem
 }
@@ -33,17 +40,19 @@ func (fs fileSystem) Open(name string) (http.File, error) {
 		return nil, err
 	}
 
-	stat, err := file.Stat()
-	if err != nil {
-		file.Close()
-		return nil, err
-	}
-
-	if stat.IsDir() {
-		index := filepath.Join(name, "index.html")
-		if _, err := fs.FileSystem.Open(index); os.IsNotExist(err) {
+	if !*list {
+		stat, err := file.Stat()
+		if err != nil {
 			file.Close()
-			return nil, os.ErrNotExist
+			return nil, err
+		}
+
+		if stat.IsDir() {
+			index := filepath.Join(name, "index.html")
+			if _, err := fs.FileSystem.Open(index); os.IsNotExist(err) {
+				file.Close()
+				return nil, os.ErrNotExist
+			}
 		}
 	}
 
@@ -99,10 +108,6 @@ func getLocalIP() string {
 }
 
 func main() {
-	host := flag.String("host", "localhost", "Host to listen on")
-	port := flag.String("port", "8080", "Port to listen on")
-	quiet := flag.Bool("quiet", false, "Disable logging")
-
 	flag.Usage = func() {
 		fmt.Println("\nUsage:\n  serve [flags] [directory]\n\nFlags:")
 		flag.PrintDefaults()
