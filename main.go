@@ -4,21 +4,20 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var (
-	host  = flag.String("host", "localhost", "Host to listen on")
-	port  = flag.String("port", "8080", "Port to listen on")
-	list  = flag.Bool("list", false, "Enable directory listings")
-	quiet = flag.Bool("quiet", false, "Disable logging")
+	addr  = flag.String("l", "localhost:8080", "Address to listen on in the form of host:port (host defaults to \"localhost\" if omitted)")
+	list  = flag.Bool("d", false, "Enable directory listings")
+	quiet = flag.Bool("q", false, "Disable logging")
 )
 
 type fileSystem struct {
@@ -56,7 +55,7 @@ func (fs fileSystem) Open(name string) (http.File, error) {
 		}
 	}
 
-	return file, err
+	return file, nil
 }
 
 type loggingResponseWriter struct {
@@ -107,11 +106,71 @@ func getLocalIP() string {
 	return ""
 }
 
+func run(root string) error {
+	handler := http.FileServer(fileSystem{http.Dir(root)})
+	if !*quiet {
+		handler = withLogging(handler)
+	}
+
+	host, port, err := net.SplitHostPort(*addr)
+	if err != nil {
+		if _, err2 := strconv.Atoi(*addr); err2 == nil {
+			port = *addr
+		} else {
+			return err
+		}
+	}
+
+	if host == "" {
+		host = "localhost"
+	}
+
+	server := http.Server{
+		Addr:    net.JoinHostPort(host, port),
+		Handler: handler,
+	}
+
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt)
+		<-sigint
+		fmt.Printf("\n\nShutting down...\n\n")
+		server.Shutdown(context.Background())
+		close(idleConnsClosed)
+	}()
+
+	url := "http://" + server.Addr
+	if host == "0.0.0.0" {
+		if ip := getLocalIP(); ip != "" {
+			url = "http://" + net.JoinHostPort(ip, port)
+		}
+	}
+
+	fmt.Printf("\nServer started at \033[4m%s\033[0m\n\n", url)
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+
+	<-idleConnsClosed
+	return nil
+}
+
 func main() {
 	flag.Usage = func() {
-		fmt.Println("\nUsage:\n  serve [flags] [directory]\n\nFlags:")
-		flag.PrintDefaults()
-		fmt.Println()
+		out := strings.Builder{}
+		out.WriteString("\nUsage:\n  serve [flags] [root]\n\nFlags:\n")
+
+		flag.VisitAll(func(f *flag.Flag) {
+			out.WriteString("  -")
+			out.WriteString(f.Name)
+			out.WriteString(strings.Repeat(" ", 4))
+			out.WriteString(f.Usage)
+			out.WriteString("\n")
+		})
+
+		fmt.Println(out.String())
 	}
 
 	flag.Parse()
@@ -122,44 +181,8 @@ func main() {
 		root = args[0]
 	}
 
-	handler := http.FileServer(fileSystem{http.Dir(root)})
-	if !*quiet {
-		handler = withLogging(handler)
+	if err := run(root); err != nil {
+		fmt.Println("Error:", err)
+		os.Exit(1)
 	}
-
-	server := http.Server{
-		Addr:    net.JoinHostPort(*host, *port),
-		Handler: handler,
-	}
-
-	idleConnsClosed := make(chan struct{})
-
-	go func() {
-		sigint := make(chan os.Signal, 1)
-		signal.Notify(sigint, os.Interrupt)
-		<-sigint
-
-		fmt.Printf("\n\nShutting down...\n\n")
-
-		if err := server.Shutdown(context.Background()); err != nil {
-			log.Println(err)
-		}
-
-		close(idleConnsClosed)
-	}()
-
-	url := "http://" + server.Addr
-	if *host == "0.0.0.0" {
-		if ip := getLocalIP(); ip != "" {
-			url = "http://" + net.JoinHostPort(ip, *port)
-		}
-	}
-
-	fmt.Printf("\nServer started at \033[4m%s\033[0m\n\n", url)
-
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatal(err)
-	}
-
-	<-idleConnsClosed
 }
