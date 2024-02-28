@@ -13,15 +13,31 @@ import (
 	"time"
 )
 
-type fileServerFileSystem struct {
+type fileSystem struct {
 	http.FileSystem
 }
 
-func (fs fileServerFileSystem) Open(name string) (http.File, error) {
+func (fs fileSystem) Open(name string) (http.File, error) {
 	file, err := fs.FileSystem.Open(name)
+	if err != nil {
+		if os.IsNotExist(err) && filepath.Ext(name) == "" {
+			return fs.FileSystem.Open(name + ".html")
+		}
+		return nil, err
+	}
 
-	if os.IsNotExist(err) && filepath.Ext(name) == "" {
-		return fs.FileSystem.Open(name + ".html")
+	stat, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+
+	if stat.IsDir() {
+		index := filepath.Join(name, "index.html")
+		if _, err := fs.FileSystem.Open(index); os.IsNotExist(err) {
+			file.Close()
+			return nil, os.ErrNotExist
+		}
 	}
 
 	return file, err
@@ -60,13 +76,6 @@ func withLogging(h http.Handler) http.HandlerFunc {
 	}
 }
 
-func withCacheControl(h http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
-		h.ServeHTTP(w, r)
-	}
-}
-
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -99,30 +108,15 @@ func main() {
 	root := "."
 	if len(args) != 0 {
 		root = args[0]
-		if _, err := os.Stat(root); os.IsNotExist(err) {
-			fmt.Println("Error: provided directory could not be found")
-			os.Exit(1)
-		}
 	}
 
-	addr := *host + ":" + *port
-	url := "http://" + addr
-	if *host == "0.0.0.0" {
-		if ip := getLocalIP(); ip != "" {
-			url = "http://" + ip + ":" + *port
-		}
-	}
-
-	handler := withCacheControl(
-		http.FileServer(fileServerFileSystem{http.Dir(root)}),
-	)
-
+	handler := http.FileServer(fileSystem{http.Dir(root)})
 	if !*quiet {
 		handler = withLogging(handler)
 	}
 
 	server := http.Server{
-		Addr:    addr,
+		Addr:    net.JoinHostPort(*host, *port),
 		Handler: handler,
 	}
 
@@ -142,13 +136,18 @@ func main() {
 		close(idleConnsClosed)
 	}()
 
-	go func() {
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatal(err)
+	url := "http://" + server.Addr
+	if *host == "0.0.0.0" {
+		if ip := getLocalIP(); ip != "" {
+			url = "http://" + net.JoinHostPort(ip, *port)
 		}
-	}()
+	}
 
 	fmt.Printf("\nServer started at \033[4m%s\033[0m\n\n", url)
+
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 
 	<-idleConnsClosed
 }
