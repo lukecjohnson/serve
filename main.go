@@ -15,43 +15,69 @@ import (
 )
 
 var (
-	addr  = flag.String("l", "localhost:8080", "Address to listen on in the form of host:port (host defaults to \"localhost\" if omitted)")
-	list  = flag.Bool("d", false, "Enable directory listings")
-	quiet = flag.Bool("q", false, "Disable logging")
+	addr        = flag.String("l", "localhost:8080", "Specify the address to listen on in the form `host:port` or `port`")
+	hiddenFiles = flag.Bool("a", false, "Serve all files, including hidden files")
+	dirListings = flag.Bool("d", false, "Enable directory listings")
+	quiet       = flag.Bool("q", false, "Disable logging")
 )
+
+type filteredDirFile struct {
+	http.File
+}
+
+func (f filteredDirFile) Readdir(count int) ([]os.FileInfo, error) {
+	files, err := f.File.Readdir(count)
+
+	if *hiddenFiles {
+		return files, err
+	}
+
+	filtered := []os.FileInfo{}
+	for _, file := range files {
+		if !strings.HasPrefix(file.Name(), ".") {
+			filtered = append(filtered, file)
+		}
+	}
+
+	return filtered, err
+}
 
 type fileSystem struct {
 	http.FileSystem
 }
 
-func (fs fileSystem) Open(name string) (http.File, error) {
-	for _, s := range strings.Split(name, "/") {
-		if strings.HasPrefix(s, ".") {
-			return nil, os.ErrPermission
+func (fs fileSystem) Open(path string) (http.File, error) {
+	if !*hiddenFiles {
+		for _, s := range strings.Split(path, "/") {
+			if strings.HasPrefix(s, ".") {
+				return nil, os.ErrPermission
+			}
 		}
 	}
 
-	file, err := fs.FileSystem.Open(name)
+	file, err := fs.FileSystem.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) && filepath.Ext(name) == "" {
-			return fs.FileSystem.Open(name + ".html")
+		if os.IsNotExist(err) && filepath.Ext(path) == "" {
+			return fs.FileSystem.Open(path + ".html")
 		}
 		return nil, err
 	}
 
-	if !*list {
-		stat, err := file.Stat()
-		if err != nil {
-			file.Close()
-			return nil, err
-		}
+	if *dirListings {
+		return filteredDirFile{file}, nil
+	}
 
-		if stat.IsDir() {
-			index := filepath.Join(name, "index.html")
-			if _, err := fs.FileSystem.Open(index); os.IsNotExist(err) {
-				file.Close()
-				return nil, os.ErrNotExist
-			}
+	stat, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+
+	if stat.IsDir() {
+		index := filepath.Join(path, "index.html")
+		if _, err := fs.FileSystem.Open(index); os.IsNotExist(err) {
+			file.Close()
+			return nil, os.ErrNotExist
 		}
 	}
 
@@ -165,7 +191,7 @@ func main() {
 		flag.VisitAll(func(f *flag.Flag) {
 			out.WriteString("  -")
 			out.WriteString(f.Name)
-			out.WriteString(strings.Repeat(" ", 4))
+			out.WriteString("    ")
 			out.WriteString(f.Usage)
 			out.WriteString("\n")
 		})
