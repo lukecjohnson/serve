@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,12 @@ type fileSystem struct {
 }
 
 func (fs fileSystem) Open(name string) (http.File, error) {
+	for _, s := range strings.Split(name, "/") {
+		if strings.HasPrefix(s, ".") {
+			return nil, os.ErrPermission
+		}
+	}
+
 	file, err := fs.FileSystem.Open(name)
 	if err != nil {
 		if os.IsNotExist(err) && filepath.Ext(name) == "" {
